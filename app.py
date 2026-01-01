@@ -41,6 +41,7 @@ with st.sidebar:
 # ==========================================
 def flatten_data(df):
     """ฟังก์ชันช่วยแปลง MultiIndex จาก yfinance ให้เป็น Single Index"""
+    # ถ้า Column เป็น MultiIndex (มีชื่อหุ้นห้อยท้าย) ให้เอาชื่อหุ้นออก
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     return df
@@ -66,24 +67,22 @@ def detect_divergence(df, lb_l, lb_r):
     last_ph_price = None
 
     # วนลูปตรวจสอบ Pivot (ต้องเว้นระยะ lb_l และ lb_r)
+    # ใช้ float() ครอบเพื่อป้องกัน Error: The truth value of a Series is ambiguous
     for i in range(lb_l, len(df) - lb_r):
         
         # --- 1. ตรวจสอบ Pivot Low (MACD) ---
-        # ดูช่วงข้อมูลรอบๆ i
         window_macd = df['MACD'].iloc[i-lb_l : i+lb_r+1]
         
-        # ถ้าจุด i ต่ำที่สุดในหน้าต่างนั้น = เป็น Pivot Low
         if df['MACD'].iloc[i] == window_macd.min():
-            current_pl_macd = float(df['MACD'].iloc[i]) # บังคับเป็น float เพื่อแก้ Bug
-            current_pl_price = float(df['Low'].iloc[i]) # บังคับเป็น float
+            # บังคับเป็น float ทันทีเพื่อแก้ปัญหาข้อมูลที่เป็น Series
+            current_pl_macd = float(df['MACD'].iloc[i]) 
+            current_pl_price = float(df['Low'].iloc[i]) 
             
-            # Logic Bullish Divergence:
-            # ราคาทำ Low ใหม่ (ต่ำกว่าเดิม) แต่ MACD ยกตัวขึ้น (สูงกว่าเดิม)
+            # Logic Bullish Divergence
             if last_pl_macd is not None:
                 if current_pl_price < last_pl_price and current_pl_macd > last_pl_macd:
                     df.at[df.index[i], 'div_bull'] = current_pl_macd
 
-            # อัปเดตค่าล่าสุด
             last_pl_macd = current_pl_macd
             last_pl_price = current_pl_price
 
@@ -92,8 +91,7 @@ def detect_divergence(df, lb_l, lb_r):
             current_ph_macd = float(df['MACD'].iloc[i])
             current_ph_price = float(df['High'].iloc[i])
             
-            # Logic Bearish Divergence:
-            # ราคาทำ High ใหม่ (สูงกว่าเดิม) แต่ MACD ต่ำลง
+            # Logic Bearish Divergence
             if last_ph_macd is not None:
                 if current_ph_price > last_ph_price and current_ph_macd < last_ph_macd:
                     df.at[df.index[i], 'div_bear'] = current_ph_macd
@@ -119,8 +117,6 @@ try:
         data['MACD'], data['Signal'], data['Hist'] = calculate_macd(data, fast_len, slow_len, sig_len)
         
         # 3.2 กำหนดสี Histogram
-        # เขียวเข้ม = แรงซื้อเพิ่ม, เขียวอ่อน = แรงซื้อลด
-        # แดงเข้ม = แรงขายเพิ่ม, แดงอ่อน = แรงขายลด
         hist_diff = data['Hist'].diff()
         data['Hist_Color'] = np.where(data['Hist'] >= 0, 
                                       np.where(hist_diff > 0, 'rgba(0, 230, 118, 0.9)', 'rgba(0, 230, 118, 0.4)'),
@@ -170,12 +166,11 @@ try:
         fig.add_trace(go.Bar(x=data.index, y=data['Hist'], 
                              marker_color=data['Hist_Color'], name='Histogram'), row=2, col=1)
 
-        # B. Chop Zone (พื้นที่สีเทาตรงกลาง)
+        # B. Chop Zone
         fig.add_hrect(y0=-dist_thres, y1=dist_thres, 
                       fillcolor="gray", opacity=0.15, line_width=0, row=2, col=1,
                       annotation_text="Chop Zone", annotation_position="top left")
         
-        # เส้นขอบ Chop Zone
         fig.add_hline(y=dist_thres, line_dash="dash", line_color="gray", row=2, col=1)
         fig.add_hline(y=-dist_thres, line_dash="dash", line_color="gray", row=2, col=1)
         fig.add_hline(y=0, line_color="white", opacity=0.3, row=2, col=1)
@@ -187,13 +182,13 @@ try:
         
         # 2. Bullish Line (Green > Threshold)
         bull_macd = data['MACD'].copy()
-        bull_macd[bull_macd <= dist_thres] = np.nan # ซ่อนค่าที่ไม่อยู่ในโซน
+        bull_macd[bull_macd <= dist_thres] = np.nan
         fig.add_trace(go.Scatter(x=data.index, y=bull_macd, 
                                  line=dict(color='#00E676', width=2), name='MACD (Bull)'), row=2, col=1)
 
         # 3. Bearish Line (Red < -Threshold)
         bear_macd = data['MACD'].copy()
-        bear_macd[bear_macd >= -dist_thres] = np.nan # ซ่อนค่าที่ไม่อยู่ในโซน
+        bear_macd[bear_macd >= -dist_thres] = np.nan
         fig.add_trace(go.Scatter(x=data.index, y=bear_macd, 
                                  line=dict(color='#FF5252', width=2), name='MACD (Bear)'), row=2, col=1)
 
@@ -201,9 +196,9 @@ try:
         fig.add_trace(go.Scatter(x=data.index, y=data['Signal'], 
                                  line=dict(color='orange', width=1), name='Signal'), row=2, col=1)
 
-        # D. Divergence Markers (แสดงจุด Div)
+        # D. Divergence Markers
         if show_div:
-            # Bull Div (สามเหลี่ยมเขียว)
+            # Bull Div
             bull_div_data = data.dropna(subset=['div_bull'])
             if not bull_div_data.empty:
                 fig.add_trace(go.Scatter(x=bull_div_data.index, y=bull_div_data['div_bull'],
@@ -212,7 +207,7 @@ try:
                                          text="Bull Div", textposition="bottom center",
                                          name='Bull Div'), row=2, col=1)
                 
-            # Bear Div (สามเหลี่ยมแดง)
+            # Bear Div
             bear_div_data = data.dropna(subset=['div_bear'])
             if not bear_div_data.empty:
                 fig.add_trace(go.Scatter(x=bear_div_data.index, y=bear_div_data['div_bear'],
@@ -221,7 +216,6 @@ try:
                                          text="Bear Div", textposition="top center",
                                          name='Bear Div'), row=2, col=1)
 
-        # Layout Settings
         fig.update_layout(height=800, xaxis_rangeslider_visible=False,
                           template="plotly_dark", title_text=f"{ticker} Analysis")
         
